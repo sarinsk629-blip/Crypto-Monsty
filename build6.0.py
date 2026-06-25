@@ -1,0 +1,1327 @@
+#!/usr/bin/env python3
+# build6.0.py
+#
+# Phase 6.0 - Institutional Nexus
+# Generates:
+# 1) phoenix-proto/engine.proto
+# 2) phoenix-bridge/grpc_server.py
+# 3) phoenix-backend/grpc_client.js
+# 4) phoenix-frontend/js/core/wasmMathEngine.js
+# 5) phoenix-frontend/js/app/goldenLayoutManager.js
+# 6) k8s/deployment.yaml
+# + integration files:
+#    - phoenix-bridge/requirements.txt (grpc libs)
+#    - phoenix-backend/package.json (grpc deps)
+#    - tools/hotfix_quote_collision.py (Phase 5.2.1-style auto patcher)
+#
+# Usage:
+#   python3 build6.0.py
+#
+# Optional local codegen (after install):
+#   python -m grpc_tools.protoc -I./phoenix-proto --python_out=./phoenix-bridge --grpc_python_out=./phoenix-bridge ./phoenix-proto/engine.proto
+#   npx grpc_tools_node_protoc --js_out=import_style=commonjs,binary:./phoenix-backend --grpc_out=grpc_js:./phoenix-backend --proto_path=./phoenix-proto ./phoenix-proto/engine.proto
+#
+# Notes:
+# - This script uses r[TRIPLE_SINGLE]...[TRIPLE_SINGLE] for embedded file strings to avoid quote collisions.
+
+from pathlib import Path
+import textwrap
+
+TRIPLE_SINGLE = "'" * 3
+TRIPLE_DOUBLE = '"' * 3
+
+ROOT = Path(".").resolve()
+
+FILES = {
+    # =========================================================
+    # 1) PROTO SCHEMA
+    # =========================================================
+    "phoenix-proto/engine.proto": r'''
+    syntax = "proto3";
+
+    package phoenix.engine;
+
+    option java_multiple_files = true;
+    option java_package = "com.phoenix.engine";
+    option java_outer_classname = "PhoenixEngineProto";
+
+    enum Side {
+      SIDE_UNSPECIFIED = 0;
+      SIDE_BUY = 1;
+      SIDE_SELL = 2;
+    }
+
+    enum Severity {
+      SEVERITY_UNSPECIFIED = 0;
+      SEVERITY_LOW = 1;
+      SEVERITY_MEDIUM = 2;
+      SEVERITY_HIGH = 3;
+      SEVERITY_CRITICAL = 4;
+    }
+
+    enum ExecutionAlgo {
+      ALGO_UNSPECIFIED = 0;
+      ALGO_TWAP = 1;
+      ALGO_VWAP = 2;
+      ALGO_ICEBERG = 3;
+    }
+
+    message TickData {
+      string exchange = 1;
+      string symbol = 2;
+      double price = 3;
+      double volume = 4;
+      Side side = 5;
+      int64 event_ts = 6;
+      int64 recv_ts = 7;
+      double latency_ms = 8;
+      map<string, string> tags = 9;
+    }
+
+    message Signal {
+      string symbol = 1;
+      double score = 2;
+      double confidence = 3;
+      string direction = 4;
+      int64 ts = 5;
+      map<string, string> diagnostics = 6;
+      repeated string labels = 7;
+      Severity severity = 8;
+    }
+
+    message ExecutionOrder {
+      string order_id = 1;
+      string symbol = 2;
+      Side side = 3;
+      double qty = 4;
+      ExecutionAlgo algo = 5;
+      int32 duration_sec = 6;
+      int32 slices = 7;
+      double display_qty = 8;
+      double min_clip = 9;
+      double max_clip = 10;
+      map<string, double> exchange_weights = 11;
+      double mark_price = 12;
+      double slippage_bps = 13;
+      int64 ts = 14;
+    }
+
+    message ExecutionSlice {
+      string parent_order_id = 1;
+      string slice_id = 2;
+      string exchange = 3;
+      string symbol = 4;
+      Side side = 5;
+      double qty = 6;
+      double exec_price = 7;
+      string status = 8;
+      int64 ts = 9;
+      map<string, string> metadata = 10;
+    }
+
+    message TickBatch {
+      repeated TickData ticks = 1;
+    }
+
+    message SignalBatch {
+      repeated Signal signals = 1;
+    }
+
+    message ExecutionResult {
+      string order_id = 1;
+      string symbol = 2;
+      Side side = 3;
+      ExecutionAlgo algo = 4;
+      double requested_qty = 5;
+      double filled_qty = 6;
+      double avg_exec_price = 7;
+      string status = 8;
+      repeated ExecutionSlice fills = 9;
+      int64 ts = 10;
+    }
+
+    message Ack {
+      bool ok = 1;
+      string message = 2;
+      int64 ts = 3;
+    }
+
+    message HealthRequest {}
+    message HealthReply {
+      bool ok = 1;
+      string service = 2;
+      int64 ts = 3;
+      map<string, string> details = 4;
+    }
+
+    service EngineBridge {
+      rpc IngestTicks (TickBatch) returns (Ack);
+      rpc PublishSignals (SignalBatch) returns (Ack);
+      rpc ExecuteOrder (ExecutionOrder) returns (ExecutionResult);
+      rpc StreamSignals (HealthRequest) returns (stream Signal);
+      rpc Health (HealthRequest) returns (HealthReply);
+    }
+    ''',
+
+    # =========================================================
+    # 2) PYTHON gRPC SERVER (alongside FastAPI)
+    # =========================================================
+    "phoenix-bridge/grpc_server.py": r'''
+    import os
+    import time
+    import json
+    import asyncio
+    from typing import List, Dict, Any
+
+    import grpc
+    from grpc import aio
+
+    # Generated via grpc_tools.protoc from phoenix-proto/engine.proto:
+    #   python -m grpc_tools.protoc -I../phoenix-proto --python_out=. --grpc_python_out=. ../phoenix-proto/engine.proto
+    import engine_pb2
+    import engine_pb2_grpc
+
+    import requests
+
+    from execution_router import ExecutionRouter
+    from ml_anomaly_detector import MLAnomalyDetector
+
+
+    BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8787")
+    GRPC_BIND = os.getenv("GRPC_BIND", "0.0.0.0:50051")
+
+
+    def side_enum_to_str(side_val: int) -> str:
+      if side_val == engine_pb2.SIDE_SELL:
+        return "sell"
+      return "buy"
+
+
+    def algo_enum_to_str(algo_val: int) -> str:
+      if algo_val == engine_pb2.ALGO_TWAP:
+        return "twap"
+      if algo_val == engine_pb2.ALGO_VWAP:
+        return "vwap"
+      if algo_val == engine_pb2.ALGO_ICEBERG:
+        return "iceberg"
+      return "twap"
+
+
+    def side_str_to_enum(side: str) -> int:
+      return engine_pb2.SIDE_SELL if str(side).lower() == "sell" else engine_pb2.SIDE_BUY
+
+
+    def severity_to_enum(sev: str) -> int:
+      s = str(sev or "low").lower()
+      if s == "critical":
+        return engine_pb2.SEVERITY_CRITICAL
+      if s == "high":
+        return engine_pb2.SEVERITY_HIGH
+      if s == "medium":
+        return engine_pb2.SEVERITY_MEDIUM
+      return engine_pb2.SEVERITY_LOW
+
+
+    class EngineBridgeService(engine_pb2_grpc.EngineBridgeServicer):
+      def __init__(self):
+        self.router = ExecutionRouter()
+        self.anomaly = MLAnomalyDetector(window=1000)
+        self.signal_subscribers: List[asyncio.Queue] = []
+
+      async def IngestTicks(self, request: engine_pb2.TickBatch, context):
+        ticks = []
+        for t in request.ticks:
+          ticks.append({
+            "exchange": t.exchange,
+            "symbol": t.symbol,
+            "price": t.price,
+            "volume": t.volume,
+            "side": side_enum_to_str(t.side),
+            "ts": t.event_ts or int(time.time() * 1000),
+            "latencyMs": t.latency_ms if t.latency_ms else None,
+            "raw": dict(t.tags)
+          })
+
+        # anomaly detect
+        anomalies = self.anomaly.ingest_ticks(ticks)
+
+        # forward to backend REST ingress
+        try:
+          r = requests.post(f"{BACKEND_BASE_URL}/api/bridge/ticks", json={"ticks": ticks}, timeout=4.5)
+          if not r.ok:
+            return engine_pb2.Ack(ok=False, message=f"backend_reject:{r.status_code}", ts=int(time.time() * 1000))
+        except Exception as e:
+          return engine_pb2.Ack(ok=False, message=f"backend_unreachable:{e}", ts=int(time.time() * 1000))
+
+        # publish anomalies as signals to stream subscribers
+        for a in anomalies:
+          sig = engine_pb2.Signal(
+            symbol=a["symbol"],
+            score=float(a["anomalyScore"]),
+            confidence=min(1.0, max(0.0, float(a["anomalyScore"]))),
+            direction="risk_on" if float(a["anomalyScore"]) < 0.5 else "risk_off",
+            ts=int(a["ts"]),
+            diagnostics={k: str(v) for k, v in a.get("z", {}).items()},
+            labels=list(a.get("labels", [])),
+            severity=severity_to_enum(a.get("severity", "low")),
+          )
+          await self._broadcast_signal(sig)
+
+        return engine_pb2.Ack(ok=True, message=f"ingested:{len(ticks)}", ts=int(time.time() * 1000))
+
+      async def PublishSignals(self, request: engine_pb2.SignalBatch, context):
+        accepted = 0
+        for s in request.signals:
+          payload = {
+            "symbol": s.symbol,
+            "score": s.score,
+            "confidence": s.confidence,
+            "direction": s.direction,
+            "ts": s.ts or int(time.time() * 1000),
+            "diagnostics": dict(s.diagnostics),
+            "labels": list(s.labels)
+          }
+          try:
+            r = requests.post(f"{BACKEND_BASE_URL}/api/bridge/signal", json=payload, timeout=3.0)
+            if r.ok:
+              accepted += 1
+          except Exception:
+            pass
+
+          # also stream out
+          await self._broadcast_signal(s)
+
+        return engine_pb2.Ack(ok=True, message=f"accepted:{accepted}", ts=int(time.time() * 1000))
+
+      async def ExecuteOrder(self, request: engine_pb2.ExecutionOrder, context):
+        req = {
+          "symbol": request.symbol,
+          "side": side_enum_to_str(request.side),
+          "qty": request.qty,
+          "algo": algo_enum_to_str(request.algo),
+          "duration_sec": request.duration_sec,
+          "slices": request.slices,
+          "display_qty": request.display_qty if request.display_qty > 0 else None,
+          "min_clip": request.min_clip if request.min_clip > 0 else None,
+          "max_clip": request.max_clip if request.max_clip > 0 else None,
+          "exchange_weights": dict(request.exchange_weights),
+          "mark_price": request.mark_price if request.mark_price > 0 else None,
+          "slippage_bps": request.slippage_bps if request.slippage_bps > 0 else 3.0
+        }
+
+        plan = self.router.create_schedule(req)
+        result = self.router.simulate_execute(plan, mark_price=req["mark_price"], slippage_bps=req["slippage_bps"])
+
+        fills = []
+        for f in result["fills"]:
+          fills.append(engine_pb2.ExecutionSlice(
+            parent_order_id=f["parent_order_id"],
+            slice_id=f["slice_id"],
+            exchange=f["exchange"],
+            symbol=f["symbol"],
+            side=side_str_to_enum(f["side"]),
+            qty=float(f["qty"]),
+            exec_price=float(f["metadata"]["exec_price"]),
+            status=f["status"],
+            ts=int(f["ts"]),
+            metadata={k: str(v) for k, v in f.get("metadata", {}).items()}
+          ))
+
+        return engine_pb2.ExecutionResult(
+          order_id=result["order_id"],
+          symbol=result["symbol"],
+          side=side_str_to_enum(result["side"]),
+          algo=request.algo,
+          requested_qty=float(result["requested_qty"]),
+          filled_qty=float(result["filled_qty"]),
+          avg_exec_price=float(result["avg_exec_price"] or 0.0),
+          status=result["status"],
+          fills=fills,
+          ts=int(time.time() * 1000)
+        )
+
+      async def StreamSignals(self, request: engine_pb2.HealthRequest, context):
+        q: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self.signal_subscribers.append(q)
+        try:
+          while True:
+            msg = await q.get()
+            yield msg
+        except asyncio.CancelledError:
+          raise
+        finally:
+          if q in self.signal_subscribers:
+            self.signal_subscribers.remove(q)
+
+      async def Health(self, request: engine_pb2.HealthRequest, context):
+        details = {
+          "backend": BACKEND_BASE_URL,
+          "grpc_bind": GRPC_BIND,
+          "subscribers": str(len(self.signal_subscribers))
+        }
+        return engine_pb2.HealthReply(
+          ok=True,
+          service="phoenix-bridge-grpc",
+          ts=int(time.time() * 1000),
+          details=details
+        )
+
+      async def _broadcast_signal(self, sig: engine_pb2.Signal):
+        stale = []
+        for q in self.signal_subscribers:
+          try:
+            if q.full():
+              _ = q.get_nowait()
+            q.put_nowait(sig)
+          except Exception:
+            stale.append(q)
+        for q in stale:
+          if q in self.signal_subscribers:
+            self.signal_subscribers.remove(q)
+
+
+    async def serve():
+      server = aio.server(options=[
+        ("grpc.max_send_message_length", 20 * 1024 * 1024),
+        ("grpc.max_receive_message_length", 20 * 1024 * 1024),
+        ("grpc.keepalive_time_ms", 20000),
+        ("grpc.keepalive_timeout_ms", 5000),
+      ])
+
+      engine_pb2_grpc.add_EngineBridgeServicer_to_server(EngineBridgeService(), server)
+      server.add_insecure_port(GRPC_BIND)
+
+      await server.start()
+      print(f"[grpc] EngineBridge listening on {GRPC_BIND}")
+      await server.wait_for_termination()
+
+
+    if __name__ == "__main__":
+      asyncio.run(serve())
+    ''',
+
+    # =========================================================
+    # 3) NODE gRPC CLIENT ADAPTER
+    # =========================================================
+    "phoenix-backend/grpc_client.js": r'''
+    import path from "path";
+    import { fileURLToPath } from "url";
+    import grpc from "@grpc/grpc-js";
+    import protoLoader from "@grpc/proto-loader";
+
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+
+    const PROTO_PATH = path.resolve(__dirname, "../phoenix-proto/engine.proto");
+    const BRIDGE_GRPC_TARGET = process.env.BRIDGE_GRPC_TARGET || "localhost:50051";
+
+    const packageDef = protoLoader.loadSync(PROTO_PATH, {
+      keepCase: true,
+      longs: String,
+      enums: Number,
+      defaults: true,
+      oneofs: true
+    });
+
+    const proto = grpc.loadPackageDefinition(packageDef);
+    const EngineBridge = proto.phoenix.engine.EngineBridge;
+
+    function sideToEnum(side) {
+      return String(side).toLowerCase() === "sell" ? 2 : 1; // SIDE_SELL : SIDE_BUY
+    }
+
+    function algoToEnum(algo) {
+      const a = String(algo).toLowerCase();
+      if (a === "twap") return 1;
+      if (a === "vwap") return 2;
+      if (a === "iceberg") return 3;
+      return 1;
+    }
+
+    export class PhoenixGrpcClient {
+      constructor({ onSignal } = {}) {
+        this.onSignal = onSignal || (() => {});
+        this.client = new EngineBridge(
+          BRIDGE_GRPC_TARGET,
+          grpc.credentials.createInsecure(),
+          {
+            "grpc.keepalive_time_ms": 20000,
+            "grpc.keepalive_timeout_ms": 5000,
+            "grpc.max_receive_message_length": 20 * 1024 * 1024,
+            "grpc.max_send_message_length": 20 * 1024 * 1024
+          }
+        );
+        this.signalStream = null;
+      }
+
+      health() {
+        return new Promise((resolve, reject) => {
+          this.client.Health({}, (err, resp) => {
+            if (err) return reject(err);
+            resolve(resp);
+          });
+        });
+      }
+
+      ingestTicks(ticks = []) {
+        const payload = {
+          ticks: ticks.map((t) => ({
+            exchange: t.exchange || "backend",
+            symbol: String(t.symbol || "").toUpperCase(),
+            price: Number(t.price || 0),
+            volume: Number(t.volume || 0),
+            side: sideToEnum(t.side || "buy"),
+            event_ts: String(t.ts || Date.now()),
+            recv_ts: String(t.recvTs || Date.now()),
+            latency_ms: Number(t.latencyMs || 0),
+            tags: t.tags || {}
+          }))
+        };
+
+        return new Promise((resolve, reject) => {
+          this.client.IngestTicks(payload, (err, resp) => {
+            if (err) return reject(err);
+            resolve(resp);
+          });
+        });
+      }
+
+      publishSignals(signals = []) {
+        const payload = {
+          signals: signals.map((s) => ({
+            symbol: String(s.symbol || "").toUpperCase(),
+            score: Number(s.score || 0),
+            confidence: Number(s.confidence || 0),
+            direction: s.direction || "neutral",
+            ts: String(s.ts || Date.now()),
+            diagnostics: s.diagnostics || {},
+            labels: s.labels || [],
+            severity: Number(s.severity || 1)
+          }))
+        };
+
+        return new Promise((resolve, reject) => {
+          this.client.PublishSignals(payload, (err, resp) => {
+            if (err) return reject(err);
+            resolve(resp);
+          });
+        });
+      }
+
+      executeOrder(req = {}) {
+        const payload = {
+          order_id: req.order_id || "",
+          symbol: String(req.symbol || "BTCUSDT").toUpperCase(),
+          side: sideToEnum(req.side || "buy"),
+          qty: Number(req.qty || 0),
+          algo: algoToEnum(req.algo || "twap"),
+          duration_sec: Number(req.duration_sec || 60),
+          slices: Number(req.slices || 12),
+          display_qty: Number(req.display_qty || 0),
+          min_clip: Number(req.min_clip || 0),
+          max_clip: Number(req.max_clip || 0),
+          exchange_weights: req.exchange_weights || {},
+          mark_price: Number(req.mark_price || 0),
+          slippage_bps: Number(req.slippage_bps || 3),
+          ts: String(Date.now())
+        };
+
+        return new Promise((resolve, reject) => {
+          this.client.ExecuteOrder(payload, (err, resp) => {
+            if (err) return reject(err);
+            resolve(resp);
+          });
+        });
+      }
+
+      startSignalStream() {
+        if (this.signalStream) {
+          try { this.signalStream.cancel(); } catch {}
+          this.signalStream = null;
+        }
+
+        this.signalStream = this.client.StreamSignals({});
+        this.signalStream.on("data", (msg) => {
+          try { this.onSignal(msg); } catch {}
+        });
+        this.signalStream.on("error", (err) => {
+          console.error("[grpc-client] signal stream error:", err.message || err);
+          setTimeout(() => this.startSignalStream(), 1500);
+        });
+        this.signalStream.on("end", () => {
+          console.warn("[grpc-client] signal stream ended; reconnecting...");
+          setTimeout(() => this.startSignalStream(), 1500);
+        });
+      }
+
+      close() {
+        try {
+          if (this.signalStream) this.signalStream.cancel();
+        } catch {}
+      }
+    }
+
+    export default PhoenixGrpcClient;
+    ''',
+
+    # =========================================================
+    # 4) FRONTEND WASM MATH ENGINE
+    # =========================================================
+    "phoenix-frontend/js/core/wasmMathEngine.js": r'''
+    /**
+     * wasmMathEngine.js
+     * High-performance math facade designed for a Wasm module.
+     * Fallback JS path included when Wasm binary is not present.
+     *
+     * Expected Wasm exports (if available):
+     * - memory
+     * - calc_depth(ptr_prices, ptr_sizes, len) -> float64
+     * - calc_cvd(ptr_sides, ptr_volumes, len) -> float64
+     */
+
+    export class WasmMathEngine {
+      constructor({ wasmUrl = "/wasm/phoenix_math.wasm" } = {}) {
+        this.wasmUrl = wasmUrl;
+        this.instance = null;
+        this.exports = null;
+        this.ready = false;
+        this.fallback = true;
+      }
+
+      async init() {
+        try {
+          const resp = await fetch(this.wasmUrl);
+          if (!resp.ok) throw new Error(`WASM fetch failed: ${resp.status}`);
+          const bytes = await resp.arrayBuffer();
+          const mod = await WebAssembly.instantiate(bytes, {});
+          this.instance = mod.instance;
+          this.exports = this.instance.exports || {};
+          this.ready = true;
+          this.fallback = false;
+          console.info("[WasmMathEngine] wasm initialized");
+        } catch (e) {
+          console.warn("[WasmMathEngine] fallback JS mode:", e?.message || e);
+          this.ready = true;
+          this.fallback = true;
+        }
+      }
+
+      /**
+       * Compute orderbook depth score:
+       * weighted sum(size / distance_to_mid)
+       */
+      calcDepthScore({ bids = [], asks = [], mid = null } = {}) {
+        if (!this.ready) throw new Error("WasmMathEngine not initialized");
+        const m = mid || this._inferMid(bids, asks);
+        if (!m || m <= 0) return 0;
+
+        // fallback JS implementation
+        let depth = 0;
+        for (const [p, q] of bids) {
+          const price = Number(p), qty = Number(q);
+          if (!Number.isFinite(price) || !Number.isFinite(qty) || qty <= 0) continue;
+          const d = Math.max(1e-9, Math.abs(m - price) / m);
+          depth += qty / d;
+        }
+        for (const [p, q] of asks) {
+          const price = Number(p), qty = Number(q);
+          if (!Number.isFinite(price) || !Number.isFinite(qty) || qty <= 0) continue;
+          const d = Math.max(1e-9, Math.abs(price - m) / m);
+          depth += qty / d;
+        }
+        return depth;
+      }
+
+      /**
+       * Compute CVD from ticks:
+       * ticks: [{side:'buy'|'sell', volume:number}]
+       */
+      calcCVD(ticks = []) {
+        if (!this.ready) throw new Error("WasmMathEngine not initialized");
+        let cvd = 0;
+        for (const t of ticks) {
+          const side = String(t.side || "buy").toLowerCase() === "sell" ? -1 : 1;
+          const vol = Number(t.volume || 0);
+          if (!Number.isFinite(vol)) continue;
+          cvd += side * vol;
+        }
+        return cvd;
+      }
+
+      /**
+       * Builds a compact matrix for UI overlay:
+       * rows: per-symbol metrics for depth/cvd/imbalance
+       */
+      buildDepthCVDMatrix(symbolSnapshots = []) {
+        if (!this.ready) throw new Error("WasmMathEngine not initialized");
+        return symbolSnapshots.map((s) => {
+          const depth = this.calcDepthScore({ bids: s.bids || [], asks: s.asks || [], mid: s.mid });
+          const cvd = this.calcCVD(s.ticks || []);
+          const imbalance = this._imbalance(s.bids || [], s.asks || []);
+          return {
+            symbol: s.symbol,
+            depthScore: depth,
+            cvd,
+            imbalance,
+            ts: Date.now()
+          };
+        });
+      }
+
+      _inferMid(bids, asks) {
+        const b = bids?.length ? Number(bids[0][0]) : NaN;
+        const a = asks?.length ? Number(asks[0][0]) : NaN;
+        if (Number.isFinite(b) && Number.isFinite(a) && a > 0 && b > 0) return (a + b) / 2;
+        return Number.isFinite(b) ? b : Number.isFinite(a) ? a : null;
+      }
+
+      _imbalance(bids, asks) {
+        const sb = (bids || []).slice(0, 30).reduce((acc, x) => acc + Number(x[1] || 0), 0);
+        const sa = (asks || []).slice(0, 30).reduce((acc, x) => acc + Number(x[1] || 0), 0);
+        const den = sb + sa;
+        return den > 0 ? (sb - sa) / den : 0;
+      }
+    }
+
+    export default WasmMathEngine;
+    ''',
+
+    # =========================================================
+    # 5) GOLDEN LAYOUT MANAGER (tear-out style)
+    # =========================================================
+    "phoenix-frontend/js/app/goldenLayoutManager.js": r'''
+    /**
+     * goldenLayoutManager.js
+     * A lightweight GoldenLayout/GridStack-style manager:
+     * - draggable/resizable panels
+     * - popout widget into separate window
+     * - persisted layout (localStorage)
+     *
+     * This is framework-agnostic and can be used with AppShell widget containers.
+     */
+
+    export class GoldenLayoutManager {
+      constructor({ root, storageKey = "phoenix_golden_layout_v1" } = {}) {
+        if (!root) throw new Error("GoldenLayoutManager requires root element");
+        this.root = root;
+        this.storageKey = storageKey;
+        this.items = new Map(); // id -> element
+      }
+
+      init() {
+        this.root.style.position = "relative";
+        this.root.style.minHeight = "700px";
+        this.restore();
+      }
+
+      registerPanel({ id, element, x = 0, y = 0, w = 500, h = 300 }) {
+        if (!id || !element) throw new Error("registerPanel requires id and element");
+        element.dataset.glId = id;
+        element.style.position = "absolute";
+        element.style.left = `${x}px`;
+        element.style.top = `${y}px`;
+        element.style.width = `${w}px`;
+        element.style.height = `${h}px`;
+        element.style.resize = "both";
+        element.style.overflow = "auto";
+        element.style.border = element.style.border || "1px solid #27406b";
+        element.style.borderRadius = element.style.borderRadius || "8px";
+        element.style.background = element.style.background || "#0b1528";
+
+        this._makeDraggable(element);
+        this._attachPopoutButton(element);
+
+        this.items.set(id, element);
+        this.root.appendChild(element);
+      }
+
+      _makeDraggable(el) {
+        let dragging = false;
+        let startX = 0, startY = 0;
+        let origL = 0, origT = 0;
+
+        const handle = el.querySelector(".head") || el;
+        handle.style.cursor = "move";
+
+        const onDown = (e) => {
+          dragging = true;
+          startX = e.clientX;
+          startY = e.clientY;
+          origL = parseInt(el.style.left || "0", 10);
+          origT = parseInt(el.style.top || "0", 10);
+          e.preventDefault();
+        };
+
+        const onMove = (e) => {
+          if (!dragging) return;
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          el.style.left = `${origL + dx}px`;
+          el.style.top = `${origT + dy}px`;
+        };
+
+        const onUp = () => {
+          if (!dragging) return;
+          dragging = false;
+          this.save();
+        };
+
+        handle.addEventListener("mousedown", onDown);
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+      }
+
+      _attachPopoutButton(el) {
+        const head = el.querySelector(".head");
+        if (!head) return;
+
+        let btn = head.querySelector(".gl-popout-btn");
+        if (!btn) {
+          btn = document.createElement("button");
+          btn.className = "gl-popout-btn";
+          btn.textContent = "Popout";
+          btn.style.marginLeft = "8px";
+          btn.style.fontSize = "11px";
+          btn.style.padding = "3px 6px";
+          btn.style.border = "1px solid #35558f";
+          btn.style.borderRadius = "6px";
+          btn.style.background = "#16284b";
+          btn.style.color = "#d8e6ff";
+          head.appendChild(btn);
+        }
+
+        btn.addEventListener("click", () => this.popout(el));
+      }
+
+      popout(el) {
+        const id = el.dataset.glId || `panel_${Date.now()}`;
+        const popup = window.open("", `phoenix_${id}`, "width=900,height=620");
+        if (!popup) return;
+
+        // simple clone
+        popup.document.write(`
+          <!doctype html>
+          <html>
+          <head>
+            <title>Phoenix Popout - ${id}</title>
+            <style>
+              body{margin:0;background:#060d17;color:#d8e6ff;font-family:Inter,system-ui}
+              .wrap{padding:8px}
+              .head{font-weight:700;margin-bottom:8px}
+              .body{border:1px solid #27406b;border-radius:8px;background:#0b1528;padding:8px;white-space:pre-wrap;font-family:ui-monospace,monospace}
+            </style>
+          </head>
+          <body>
+            <div class="wrap">
+              <div class="head">${id}</div>
+              <div class="body">${(el.querySelector(".body")?.innerText || "No content").replace(/</g, "&lt;")}</div>
+            </div>
+          </body>
+          </html>
+        `);
+        popup.document.close();
+      }
+
+      snapshot() {
+        const out = [];
+        for (const [id, el] of this.items.entries()) {
+          out.push({
+            id,
+            left: parseInt(el.style.left || "0", 10),
+            top: parseInt(el.style.top || "0", 10),
+            width: parseInt(el.style.width || "500", 10),
+            height: parseInt(el.style.height || "300", 10)
+          });
+        }
+        return out;
+      }
+
+      save() {
+        try {
+          localStorage.setItem(this.storageKey, JSON.stringify(this.snapshot()));
+        } catch (e) {
+          console.warn("[GoldenLayoutManager] save failed", e);
+        }
+      }
+
+      restore() {
+        try {
+          const raw = localStorage.getItem(this.storageKey);
+          if (!raw) return;
+          const arr = JSON.parse(raw);
+          if (!Array.isArray(arr)) return;
+          for (const item of arr) {
+            const el = this.root.querySelector(`[data-gl-id="${item.id}"]`);
+            if (!el) continue;
+            el.style.left = `${item.left}px`;
+            el.style.top = `${item.top}px`;
+            el.style.width = `${item.width}px`;
+            el.style.height = `${item.height}px`;
+          }
+        } catch (e) {
+          console.warn("[GoldenLayoutManager] restore failed", e);
+        }
+      }
+    }
+
+    export default GoldenLayoutManager;
+    ''',
+
+    # =========================================================
+    # 6) KUBERNETES MANIFEST
+    # =========================================================
+    "k8s/deployment.yaml": r'''
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: phoenix
+    ---
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: phoenix-config
+      namespace: phoenix
+    data:
+      NODE_ENV: "production"
+      BACKEND_PORT: "8787"
+      BRIDGE_PORT: "8899"
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgresql://phoenix:phoenix@postgres:5432/phoenix"
+      BACKEND_BASE_URL: "http://backend:8787"
+      BRIDGE_GRPC_TARGET: "bridge:50051"
+    ---
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: phoenix-secret
+      namespace: phoenix
+    type: Opaque
+    stringData:
+      POSTGRES_DB: "phoenix"
+      POSTGRES_USER: "phoenix"
+      POSTGRES_PASSWORD: "phoenix"
+      BRIDGE_API_KEY: "dev-bridge-key"
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: redis
+      namespace: phoenix
+      labels:
+        app: redis
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: redis
+      template:
+        metadata:
+          labels:
+            app: redis
+        spec:
+          containers:
+            - name: redis
+              image: redis:7-alpine
+              args: ["redis-server", "--appendonly", "yes"]
+              ports:
+                - containerPort: 6379
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              livenessProbe:
+                tcpSocket:
+                  port: 6379
+                initialDelaySeconds: 10
+                periodSeconds: 10
+              readinessProbe:
+                tcpSocket:
+                  port: 6379
+                initialDelaySeconds: 5
+                periodSeconds: 5
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: redis
+      namespace: phoenix
+    spec:
+      selector:
+        app: redis
+      ports:
+        - port: 6379
+          targetPort: 6379
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: postgres
+      namespace: phoenix
+      labels:
+        app: postgres
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: postgres
+      template:
+        metadata:
+          labels:
+            app: postgres
+        spec:
+          containers:
+            - name: postgres
+              image: postgres:16-alpine
+              env:
+                - name: POSTGRES_DB
+                  valueFrom: { secretKeyRef: { name: phoenix-secret, key: POSTGRES_DB } }
+                - name: POSTGRES_USER
+                  valueFrom: { secretKeyRef: { name: phoenix-secret, key: POSTGRES_USER } }
+                - name: POSTGRES_PASSWORD
+                  valueFrom: { secretKeyRef: { name: phoenix-secret, key: POSTGRES_PASSWORD } }
+              ports:
+                - containerPort: 5432
+              resources:
+                requests:
+                  cpu: "200m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "1000m"
+                  memory: "1Gi"
+              livenessProbe:
+                exec:
+                  command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+                initialDelaySeconds: 20
+                periodSeconds: 10
+              readinessProbe:
+                exec:
+                  command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+                initialDelaySeconds: 10
+                periodSeconds: 5
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: postgres
+      namespace: phoenix
+    spec:
+      selector:
+        app: postgres
+      ports:
+        - port: 5432
+          targetPort: 5432
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: bridge
+      namespace: phoenix
+      labels:
+        app: bridge
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app: bridge
+      template:
+        metadata:
+          labels:
+            app: bridge
+        spec:
+          containers:
+            - name: bridge
+              image: phoenix/bridge:latest
+              env:
+                - name: BRIDGE_PORT
+                  valueFrom: { configMapKeyRef: { name: phoenix-config, key: BRIDGE_PORT } }
+                - name: BACKEND_BASE_URL
+                  valueFrom: { configMapKeyRef: { name: phoenix-config, key: BACKEND_BASE_URL } }
+                - name: BRIDGE_API_KEY
+                  valueFrom: { secretKeyRef: { name: phoenix-secret, key: BRIDGE_API_KEY } }
+              ports:
+                - containerPort: 8899
+                - containerPort: 50051
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "1500m"
+                  memory: "1Gi"
+              livenessProbe:
+                httpGet:
+                  path: /health
+                  port: 8899
+                initialDelaySeconds: 20
+                periodSeconds: 10
+              readinessProbe:
+                httpGet:
+                  path: /health
+                  port: 8899
+                initialDelaySeconds: 10
+                periodSeconds: 5
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: bridge
+      namespace: phoenix
+    spec:
+      selector:
+        app: bridge
+      ports:
+        - name: http
+          port: 8899
+          targetPort: 8899
+        - name: grpc
+          port: 50051
+          targetPort: 50051
+    ---
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: bridge-hpa
+      namespace: phoenix
+    spec:
+      scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: bridge
+      minReplicas: 2
+      maxReplicas: 8
+      metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 70
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: backend
+      namespace: phoenix
+      labels:
+        app: backend
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: backend
+      template:
+        metadata:
+          labels:
+            app: backend
+        spec:
+          containers:
+            - name: backend
+              image: phoenix/backend:latest
+              env:
+                - name: PORT
+                  valueFrom: { configMapKeyRef: { name: phoenix-config, key: BACKEND_PORT } }
+                - name: REDIS_URL
+                  valueFrom: { configMapKeyRef: { name: phoenix-config, key: REDIS_URL } }
+                - name: DATABASE_URL
+                  valueFrom: { configMapKeyRef: { name: phoenix-config, key: DATABASE_URL } }
+                - name: BRIDGE_GRPC_TARGET
+                  valueFrom: { configMapKeyRef: { name: phoenix-config, key: BRIDGE_GRPC_TARGET } }
+              ports:
+                - containerPort: 8787
+              resources:
+                requests:
+                  cpu: "300m"
+                  memory: "384Mi"
+                limits:
+                  cpu: "2000m"
+                  memory: "2Gi"
+              livenessProbe:
+                httpGet:
+                  path: /health
+                  port: 8787
+                initialDelaySeconds: 25
+                periodSeconds: 10
+              readinessProbe:
+                httpGet:
+                  path: /health
+                  port: 8787
+                initialDelaySeconds: 12
+                periodSeconds: 5
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: backend
+      namespace: phoenix
+    spec:
+      selector:
+        app: backend
+      ports:
+        - port: 8787
+          targetPort: 8787
+      type: ClusterIP
+    ---
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: backend-hpa
+      namespace: phoenix
+    spec:
+      scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: backend
+      minReplicas: 3
+      maxReplicas: 12
+      metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 65
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: backend-lb
+      namespace: phoenix
+    spec:
+      selector:
+        app: backend
+      ports:
+        - port: 80
+          targetPort: 8787
+      type: LoadBalancer
+    ''',
+
+    # =========================================================
+    # SUPPORTING INTEGRATIONS
+    # =========================================================
+    "phoenix-bridge/requirements.txt": r'''
+    fastapi==0.112.0
+    uvicorn==0.30.3
+    requests==2.32.3
+    websockets==12.0
+    pydantic==2.8.2
+    python-dotenv==1.0.1
+    scikit-learn==1.5.1
+    numpy==1.26.4
+    grpcio==1.65.1
+    grpcio-tools==1.65.1
+    ''',
+
+    "phoenix-backend/package.json": r'''
+    {
+      "name": "phoenix-backend",
+      "version": "2.0.0",
+      "description": "Phoenix backend with gRPC bridge client + hot cache + replay",
+      "main": "server.js",
+      "type": "module",
+      "scripts": {
+        "start": "node server.js",
+        "dev": "node server.js"
+      },
+      "dependencies": {
+        "@grpc/grpc-js": "^1.12.2",
+        "@grpc/proto-loader": "^0.7.13",
+        "cors": "^2.8.5",
+        "express": "^4.19.2",
+        "pg": "^8.12.0",
+        "redis": "^4.7.0",
+        "socket.io": "^4.8.1"
+      },
+      "devDependencies": {
+        "grpc-tools": "^1.13.0"
+      }
+    }
+    ''',
+
+    # =========================================================
+    # QUOTE COLLISION HOTFIX TOOL (Phase 5.2.1 style)
+    # =========================================================
+    "tools/hotfix_quote_collision.py": r'''
+    #!/usr/bin/env python3
+    """
+    hotfix_quote_collision.py
+    Scans build*.py files and replaces raw triple double quote wrappers r"""..."""
+    with raw triple single quote wrappers r[TRIPLE_SINGLE]... [TRIPLE_SINGLE] when safe.
+    """
+
+    from pathlib import Path
+
+    ROOT = Path(".").resolve()
+
+    def patch_file(p: Path):
+      txt = p.read_text(encoding="utf-8")
+      if 'r"""' not in txt:
+        return False
+
+      out = []
+      i = 0
+      changed = False
+      n = len(txt)
+
+      while i < n:
+        if txt.startswith('r"""', i):
+          # find closing """
+          j = i + 4
+          end = txt.find('"""', j)
+          if end == -1:
+            out.append(txt[i:])
+            break
+
+          body = txt[j:end]
+          # only convert if body does NOT contain triple single quotes
+          if TRIPLE_SINGLE not in body:
+            out.append("r" + TRIPLE_SINGLE)
+            out.append(body)
+            out.append(TRIPLE_SINGLE)
+            changed = True
+          else:
+            out.append(txt[i:end+3])
+
+          i = end + 3
+        else:
+          out.append(txt[i])
+          i += 1
+
+      if changed:
+        p.write_text("".join(out), encoding="utf-8")
+      return changed
+
+    def main():
+      count = 0
+      for p in ROOT.glob("build*.py"):
+        if patch_file(p):
+          count += 1
+          print(f"patched: {p}")
+      print(f"done. files patched: {count}")
+
+    if __name__ == "__main__":
+      main()
+    '''
+}
+
+def write_file(path: Path, content: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned = textwrap.dedent(content).lstrip("\n")
+    path.write_text(cleaned, encoding="utf-8")
+
+def main():
+    print("Generating Phase 6.0 Institutional Nexus files...")
+    for rel, content in FILES.items():
+        write_file(ROOT / rel, content)
+        print(f"✔ {rel}")
+    print("\nDone.")
+    print("Next:")
+    print("1) python3 tools/hotfix_quote_collision.py")
+    print("2) (optional) generate gRPC stubs from phoenix-proto/engine.proto")
+    print("3) integrate grpc_client.js into backend server bootstrap")
+    print("4) deploy k8s/deployment.yaml on a capable cluster")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,325 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phoenix
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phoenix-config
+  namespace: phoenix
+data:
+  NODE_ENV: "production"
+  BACKEND_PORT: "8787"
+  BRIDGE_PORT: "8899"
+  REDIS_URL: "redis://redis:6379"
+  DATABASE_URL: "postgresql://phoenix:phoenix@postgres:5432/phoenix"
+  BACKEND_BASE_URL: "http://backend:8787"
+  BRIDGE_GRPC_TARGET: "bridge:50051"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: phoenix-secret
+  namespace: phoenix
+type: Opaque
+stringData:
+  POSTGRES_DB: "phoenix"
+  POSTGRES_USER: "phoenix"
+  POSTGRES_PASSWORD: "phoenix"
+  BRIDGE_API_KEY: "dev-bridge-key"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: phoenix
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--appendonly", "yes"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: phoenix
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: phoenix
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              valueFrom: { secretKeyRef: { name: phoenix-secret, key: POSTGRES_DB } }
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: phoenix-secret, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: phoenix-secret, key: POSTGRES_PASSWORD } }
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: phoenix
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bridge
+  namespace: phoenix
+  labels:
+    app: bridge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bridge
+  template:
+    metadata:
+      labels:
+        app: bridge
+    spec:
+      containers:
+        - name: bridge
+          image: phoenix/bridge:latest
+          env:
+            - name: BRIDGE_PORT
+              valueFrom: { configMapKeyRef: { name: phoenix-config, key: BRIDGE_PORT } }
+            - name: BACKEND_BASE_URL
+              valueFrom: { configMapKeyRef: { name: phoenix-config, key: BACKEND_BASE_URL } }
+            - name: BRIDGE_API_KEY
+              valueFrom: { secretKeyRef: { name: phoenix-secret, key: BRIDGE_API_KEY } }
+          ports:
+            - containerPort: 8899
+            - containerPort: 50051
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1500m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8899
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8899
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bridge
+  namespace: phoenix
+spec:
+  selector:
+    app: bridge
+  ports:
+    - name: http
+      port: 8899
+      targetPort: 8899
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bridge-hpa
+  namespace: phoenix
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bridge
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: phoenix
+  labels:
+    app: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: phoenix/backend:latest
+          env:
+            - name: PORT
+              valueFrom: { configMapKeyRef: { name: phoenix-config, key: BACKEND_PORT } }
+            - name: REDIS_URL
+              valueFrom: { configMapKeyRef: { name: phoenix-config, key: REDIS_URL } }
+            - name: DATABASE_URL
+              valueFrom: { configMapKeyRef: { name: phoenix-config, key: DATABASE_URL } }
+            - name: BRIDGE_GRPC_TARGET
+              valueFrom: { configMapKeyRef: { name: phoenix-config, key: BRIDGE_GRPC_TARGET } }
+          ports:
+            - containerPort: 8787
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "384Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 25
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 12
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: phoenix
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8787
+      targetPort: 8787
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: phoenix
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-lb
+  namespace: phoenix
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 80
+      targetPort: 8787
+  type: LoadBalancer

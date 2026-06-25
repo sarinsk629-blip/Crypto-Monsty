@@ -1,7 +1,7 @@
 {
   "name": "phoenix-backend",
-  "version": "1.0.0",
-  "description": "Phoenix Terminal backend - multiplexer, microstructure, replay/backtest, hot cache",
+  "version": "2.0.0",
+  "description": "Phoenix backend with gRPC bridge client + hot cache + replay",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -9,10 +9,15 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.12.2",
+    "@grpc/proto-loader": "^0.7.13",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "pg": "^8.12.0",
     "redis": "^4.7.0",
     "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "grpc-tools": "^1.13.0"
   }
 }

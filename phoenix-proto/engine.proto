@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package phoenix.engine;
+
+option java_multiple_files = true;
+option java_package = "com.phoenix.engine";
+option java_outer_classname = "PhoenixEngineProto";
+
+enum Side {
+  SIDE_UNSPECIFIED = 0;
+  SIDE_BUY = 1;
+  SIDE_SELL = 2;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_LOW = 1;
+  SEVERITY_MEDIUM = 2;
+  SEVERITY_HIGH = 3;
+  SEVERITY_CRITICAL = 4;
+}
+
+enum ExecutionAlgo {
+  ALGO_UNSPECIFIED = 0;
+  ALGO_TWAP = 1;
+  ALGO_VWAP = 2;
+  ALGO_ICEBERG = 3;
+}
+
+message TickData {
+  string exchange = 1;
+  string symbol = 2;
+  double price = 3;
+  double volume = 4;
+  Side side = 5;
+  int64 event_ts = 6;
+  int64 recv_ts = 7;
+  double latency_ms = 8;
+  map<string, string> tags = 9;
+}
+
+message Signal {
+  string symbol = 1;
+  double score = 2;
+  double confidence = 3;
+  string direction = 4;
+  int64 ts = 5;
+  map<string, string> diagnostics = 6;
+  repeated string labels = 7;
+  Severity severity = 8;
+}
+
+message ExecutionOrder {
+  string order_id = 1;
+  string symbol = 2;
+  Side side = 3;
+  double qty = 4;
+  ExecutionAlgo algo = 5;
+  int32 duration_sec = 6;
+  int32 slices = 7;
+  double display_qty = 8;
+  double min_clip = 9;
+  double max_clip = 10;
+  map<string, double> exchange_weights = 11;
+  double mark_price = 12;
+  double slippage_bps = 13;
+  int64 ts = 14;
+}
+
+message ExecutionSlice {
+  string parent_order_id = 1;
+  string slice_id = 2;
+  string exchange = 3;
+  string symbol = 4;
+  Side side = 5;
+  double qty = 6;
+  double exec_price = 7;
+  string status = 8;
+  int64 ts = 9;
+  map<string, string> metadata = 10;
+}
+
+message TickBatch {
+  repeated TickData ticks = 1;
+}
+
+message SignalBatch {
+  repeated Signal signals = 1;
+}
+
+message ExecutionResult {
+  string order_id = 1;
+  string symbol = 2;
+  Side side = 3;
+  ExecutionAlgo algo = 4;
+  double requested_qty = 5;
+  double filled_qty = 6;
+  double avg_exec_price = 7;
+  string status = 8;
+  repeated ExecutionSlice fills = 9;
+  int64 ts = 10;
+}
+
+message Ack {
+  bool ok = 1;
+  string message = 2;
+  int64 ts = 3;
+}
+
+message HealthRequest {}
+message HealthReply {
+  bool ok = 1;
+  string service = 2;
+  int64 ts = 3;
+  map<string, string> details = 4;
+}
+
+service EngineBridge {
+  rpc IngestTicks (TickBatch) returns (Ack);
+  rpc PublishSignals (SignalBatch) returns (Ack);
+  rpc ExecuteOrder (ExecutionOrder) returns (ExecutionResult);
+  rpc StreamSignals (HealthRequest) returns (stream Signal);
+  rpc Health (HealthRequest) returns (HealthReply);
+}

@@ -1,0 +1,106 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: phoenix-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: phoenix-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-phoenix}
+      POSTGRES_USER: ${POSTGRES_USER:-phoenix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-phoenix}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-phoenix} -d ${POSTGRES_DB:-phoenix}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./phoenix-backend
+      dockerfile: Dockerfile
+    container_name: phoenix-backend
+    env_file:
+      - ./.env
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${BACKEND_PORT:-8787}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://phoenix:phoenix@postgres:5432/phoenix}
+    ports:
+      - "${BACKEND_PORT:-8787}:8787"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  bridge:
+    build:
+      context: ./phoenix-bridge
+      dockerfile: Dockerfile
+    container_name: phoenix-bridge
+    env_file:
+      - ./.env
+    environment:
+      BRIDGE_PORT: ${BRIDGE_PORT:-8899}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8787}
+      BACKEND_WS_URL: ${BACKEND_WS_URL:-http://backend:8787}
+      BRIDGE_API_KEY: ${BRIDGE_API_KEY:-dev-bridge-key}
+    ports:
+      - "${BRIDGE_PORT:-8899}:8899"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; print(urllib.request.urlopen('http://localhost:8899/health').status)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: phoenix-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@phoenix.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:

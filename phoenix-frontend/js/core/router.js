@@ -1,8 +1,10 @@
 import { renderTerminalPage } from "../pages/terminal.js";
+import renderRiskDashboard from "../pages/riskDashboard.js";
 
 const routes = {
   "/": renderHome,
-  "/terminal": renderTerminal
+  "/terminal": renderTerminal,
+  "/risk": renderRisk
 };
 
 function root() {
@@ -23,9 +25,9 @@ function renderHome(container = root()) {
   const main = clearMain(container);
   const card = document.createElement("section");
   card.innerHTML = `
-    <h2>Crypto Monsty — Phoenix Terminal</h2>
-    <p>High-performance quant terminal initialized.</p>
-    <p><a href="#/terminal">Open /terminal</a></p>
+    <h2>Crypto Monsty — Phoenix</h2>
+    <p><a href="#/terminal">Open Terminal</a></p>
+    <p><a href="#/risk">Open Risk Dashboard</a></p>
     <pre id="debug" style="background:#111827;padding:10px;border-radius:8px;overflow:auto"></pre>
   `;
   main.appendChild(card);
@@ -36,22 +38,18 @@ function renderTerminal(container = root()) {
   renderTerminalPage(main);
 }
 
+function renderRisk(container = root()) {
+  const main = clearMain(container);
+  renderRiskDashboard(main);
+}
+
 export function navigateTo(path) {
-  const renderer = routes[path] || renderHome;
-  renderer(root());
+  const fn = routes[path] || renderHome;
+  fn(root());
 }
 
 export function initRouter() {
-  function parseHash() {
-    const hash = window.location.hash || "#/";
-    const path = hash.replace(/^#/, "") || "/";
-    return path;
-  }
-
-  window.addEventListener("hashchange", () => {
-    navigateTo(parseHash());
-  });
-
-  const initial = parseHash();
-  navigateTo(initial);
+  const parse = () => (window.location.hash || "#/").replace(/^#/, "") || "/";
+  window.addEventListener("hashchange", () => navigateTo(parse()));
+  navigateTo(parse());
 }

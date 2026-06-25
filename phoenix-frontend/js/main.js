@@ -1,18 +1,29 @@
 import { initState, applyQuantUpdate } from "./core/state.js";
 import { connectWebSocket, onQuantUpdate } from "./services/websocket.js";
+import { initRouter } from "./core/router.js";
+import { initGlobalEvents } from "./core/events.js";
 
-initState();
+// Optional stream URL; set window.PHOENIX_WS_URL before loading app if needed.
+const WS_URL = window.PHOENIX_WS_URL || "ws://localhost:8787";
 
-onQuantUpdate((payload) => {
-  applyQuantUpdate(payload);
+function boot() {
+  initState();
+  initGlobalEvents();
+  initRouter();
 
-  const debug = document.getElementById("debug");
-  if (debug) {
-    const last = payload?.points?.[payload.points.length - 1];
-    debug.textContent = JSON.stringify(last || {}, null, 2);
-  }
-});
+  onQuantUpdate((payload) => {
+    applyQuantUpdate(payload);
+    const debug = document.getElementById("debug");
+    if (debug) {
+      const last = payload?.points?.[payload.points.length - 1];
+      debug.textContent = JSON.stringify(last || {}, null, 2);
+    }
+  });
 
-// Replace with your exchange stream URL when ready:
-// connectWebSocket("wss://your-stream-endpoint");
-console.info("[main] Phoenix Terminal booted.");
+  // If your backend emits "market:tick" over Socket.io instead, this can remain disabled.
+  // connectWebSocket(WS_URL);
+
+  console.info("[main] Phoenix Terminal booted.");
+}
+
+boot();

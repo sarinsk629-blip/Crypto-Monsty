@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phoenix Institutional Cockpit</title>
+  <link rel="stylesheet" href="./css/institutional-cockpit.css" />
+</head>
+<body>
+  <div id="cockpit-root" class="cockpit">
+    <header class="topbar">
+      <div class="brand">
+        <h1>Phoenix Institutional Cockpit</h1>
+        <small>Phase 4.2 • Multi-Exchange Microstructure</small>
+      </div>
+      <div class="status-cluster">
+        <div class="status-card"><span>Backend</span><strong id="status-backend">--</strong></div>
+        <div class="status-card"><span>Redis</span><strong id="status-redis">--</strong></div>
+        <div class="status-card"><span>Postgres</span><strong id="status-pg">--</strong></div>
+        <div class="status-card"><span>RTT</span><strong id="status-rtt">--</strong></div>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="panel panel-chart">
+        <h2>HFT Graph</h2>
+        <canvas id="hft-canvas" width="1200" height="340"></canvas>
+      </article>
+
+      <article class="panel panel-orderflow">
+        <h2>Orderflow / Consensus</h2>
+        <pre id="consensus-box">Waiting...</pre>
+      </article>
+
+      <article class="panel panel-risk">
+        <h2>Risk Matrix</h2>
+        <pre id="risk-box">Waiting...</pre>
+      </article>
+
+      <article class="panel panel-terminal">
+        <h2>Execution Console</h2>
+        <div id="term-log" class="term-log"></div>
+        <input id="term-input" class="term-input" placeholder="/buy BTCUSDT 0.01 10x | /consensus BTCUSDT | /backtest BTCUSDT 3600" />
+      </article>
+
+      <article class="panel panel-replay">
+        <h2>Replay / Backtest</h2>
+        <div class="replay-row">
+          <button id="btn-backtest">Run Backtest (Last 1h BTCUSDT)</button>
+        </div>
+        <pre id="backtest-box">No results yet.</pre>
+      </article>
+
+      <article class="panel panel-health">
+        <h2>Exchange Health</h2>
+        <pre id="health-box">Waiting...</pre>
+      </article>
+    </section>
+  </div>
+
+  <script type="module" src="./js/pages/institutionalCockpit.js"></script>
+</body>
+</html>

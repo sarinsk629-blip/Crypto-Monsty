@@ -391,7 +391,7 @@ export class AppShell {
       const symbol = (p[1] || this.store.get().symbol).toUpperCase();
       const score = Number(p[2] || 0);
       try {
-        const r = await fetch("https://phoenix-bridge.onrender.com") + "/signal", {
+        const r = await fetch("https://phoenix-bridge.onrender.com" + "/signal", {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-api-key": "dev-bridge-key" },
           body: JSON.stringify({
@@ -451,7 +451,7 @@ export class AppShell {
       }
 
       try {
-        const br = await fetch("https://phoenix-bridge.onrender.com") + "/health").then((r) => r.json());
+        const br = await fetch("https://phoenix-bridge.onrender.com" + "/health").then((r) => r.json());
         this.store.set({ bridgeHealth: br });
       } catch {
         this.store.set({ bridgeHealth: { ok: false } });

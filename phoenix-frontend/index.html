@@ -69,5 +69,49 @@
                 log('<span style="color:red">🚨 CRASH: ' + err.message + '</span>');
             });
     </script>
+
+    <script>
+        // ⚡ THE DEFIBRILLATOR: Hardwired Telemetry Override
+        setTimeout(() => {
+            const term = document.getElementById('sys-terminal');
+            const termLog = (msg) => { if(term) term.innerHTML += '> ' + msg + '<br>'; term.scrollTop = term.scrollHeight; };
+            
+            termLog('<span style="color:#00ffcc">Initiating Direct Telemetry Override...</span>');
+            
+            // 1. Force connection to Node.js Backend
+            try {
+                const backWsUrl = window.BACKEND_URL.replace('http', 'ws');
+                termLog('Connecting to Node Aggregator: ' + backWsUrl);
+                
+                const backWs = new WebSocket(backWsUrl);
+                backWs.onopen = () => {
+                    document.getElementById('backend-status').innerHTML = '🟢 Backend [LIVE]';
+                    document.getElementById('exec-content').innerHTML = '<span style="color:#0f0">Connection Established. Awaiting market ticks...</span>';
+                    termLog('<span style="color:#0f0">🟢 Node.js Aggregator Connected</span>');
+                };
+                backWs.onmessage = (e) => {
+                    document.getElementById('exec-content').innerHTML = '<div style="color:#0f0; word-break: break-all;"><b>TICK:</b> ' + e.data.substring(0, 150) + '</div>';
+                };
+                backWs.onerror = () => termLog('<span style="color:#ffaa00">Backend WS connection rejected. (Check if server requires specific /ws path)</span>');
+            } catch(e) { termLog('<span style="color:red">Backend Error: ' + e.message + '</span>'); }
+
+            // 2. Force connection to Python ML Bridge
+            try {
+                termLog('Connecting to Python Bridge: ' + window.BRIDGE_WS_URL);
+                const bridgeWs = new WebSocket(window.BRIDGE_WS_URL);
+                bridgeWs.onopen = () => {
+                    document.getElementById('bridge-status').innerHTML = '🟢 Bridge [LIVE]';
+                    document.getElementById('radar-content').innerHTML = '<span style="color:#0f0">Radar Online. Scanning for anomalies...</span>';
+                    termLog('<span style="color:#0f0">🟢 Python ML Bridge Connected</span>');
+                };
+                bridgeWs.onmessage = (e) => {
+                    document.getElementById('radar-content').innerHTML = '<div style="color:#0f0; word-break: break-all;"><b>ANOMALY:</b> ' + e.data.substring(0, 150) + '</div>';
+                };
+                bridgeWs.onerror = () => termLog('<span style="color:#ffaa00">Bridge WS connection rejected.</span>');
+            } catch(e) { termLog('<span style="color:red">Bridge Error: ' + e.message + '</span>'); }
+            
+        }, 1500); // Wait 1.5s for UI to render before striking
+    </script>
+    
 </body>
 </html>

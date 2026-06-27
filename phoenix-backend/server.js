@@ -1,3 +1,6 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+globalThis.require = require;
 import express from "express";
 import http from "http";
 import cors from "cors";

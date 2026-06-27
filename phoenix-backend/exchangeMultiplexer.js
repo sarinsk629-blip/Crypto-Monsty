@@ -1,3 +1,6 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+globalThis.require = require;
 import { EventEmitter } from "events";
 
 /**

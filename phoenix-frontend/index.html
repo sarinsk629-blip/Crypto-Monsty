@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>
+        window.addEventListener('error', (event) => {
+            if (event.target.tagName === 'SCRIPT' || event.target.tagName === 'LINK') {
+                console.error('🔴 FAILED TO LOAD FILE:', event.target.src || event.target.href);
+            }
+        }, true);
+    </script>
+    
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Phoenix Institutional Nexus V6.0</title>

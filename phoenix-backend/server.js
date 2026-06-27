@@ -218,9 +218,7 @@ setInterval(async () => {
     const vpin = vpinMap.get(sym)?.value() ?? 0;
     const deltas = xdelta.snapshot(sym);
     const z = wallStats.get(sym)?.zscore(Math.max(Math.abs(micro.bai || 0), Math.abs(micro.obi || 0))) ?? 0;
-    server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-});
+
 
 
     let c = evaluateDeepConsensus({
@@ -255,6 +253,10 @@ setInterval(async () => {
     pgWriter.enqueueConsensus(out);
   }
 }, 250);
+
+    server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+});
 
 // Tick ingestion from multiplexer
 multiplexer.on("market:tick", async (tick) => {

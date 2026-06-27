@@ -1,42 +1,51 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phoenix Cockpit V6.0</title>
+    <link rel="stylesheet" href="./css/institutional-cockpit-v5.css">
     
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>eruda.init(); console.log("🛠️ Eruda Initialized");</script>
     
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Phoenix Institutional Cockpit V5.2</title>
-  <link rel="stylesheet" href="./css/institutional-cockpit-v5.css" />
-
     <script>
-      window.onerror = function(msg, url, line, col, error) {
-        document.body.innerHTML = '<div style="color:#ff4444; padding:20px; font-family:monospace; background:#000; height:100vh; width:100vw; position:absolute; top:0; left:0; z-index:9999; word-wrap: break-word;">' + 
-          '<h3>🚨 CRITICAL JS FAULT</h3>' +
-          '<b>Error:</b> ' + msg + '<br><br>' +
-          '<b>File:</b> ' + url + '<br>' +
-          '<b>Line:</b> ' + line + ':' + col + '<br><br>' +
-          '<b>Stack:</b> ' + (error ? error.stack : 'N/A') + 
-          '</div>';
-        return false;
-      };
+        window.BACKEND_URL = "https://phoenix-backend-6h1n.onrender.com";
+        window.BRIDGE_URL = "https://phoenix-bridge-YOUR_BRIDGE_URL_HERE.onrender.com";
+        window.BRIDGE_WS_URL = "wss://phoenix-bridge-YOUR_BRIDGE_URL_HERE.onrender.com/ws/signals";
+        console.log("🌐 Network config loaded");
     </script>
-    </head>
+</head>
 <body>
-  <div id="app-root"></div>
-  <script>
-        // RENDER CLOUD URL CONFIGURATION
-        // We will update these manually in the browser or inject them later
-        window.BACKEND_URL = "https://phoenix-backend-YOUR_URL.onrender.com";
-        window.BRIDGE_URL = "https://phoenix-bridge-YOUR_URL.onrender.com";
-        window.BRIDGE_WS_URL = "wss://phoenix-bridge-YOUR_URL.onrender.com/ws/signals";
-      </script>
-      
+    <div id="app-root" style="color: #0f0; padding: 20px; font-family: monospace;">
+        ⏳ IGNITING PHOENIX ENGINE...<br>
+        (If this text doesn't disappear, the JavaScript engine stalled.)
+    </div>
 
-    
-    
-<script type="module" src="./js/app/appShell.js"></script>
-
-<script src="https://cdn.jsdelivr.net/npm/eruda"></script><script>eruda.init();</script>
+    <script type="module">
+        console.log("🚀 Attempting to import appShell.js...");
+        
+        import('./js/app/appShell.js')
+            .then(module => {
+                console.log("✅ appShell.js downloaded successfully!", module);
+                
+                // Clear the loading text
+                document.getElementById('app-root').innerHTML = ''; 
+                
+                // Find the class exported by the AI and ignite it
+                const exportedKeys = Object.keys(module);
+                if (exportedKeys.length > 0) {
+                    const AppClass = module[exportedKeys[0]];
+                    window.cockpit = new AppClass();
+                    console.log("🔥 UI INSTANTIATED!");
+                } else {
+                    document.getElementById('app-root').innerHTML = '❌ appShell.js loaded, but it exports nothing!';
+                }
+            })
+            .catch(err => {
+                console.error("🚨 FATAL IMPORT CRASH:", err);
+                document.getElementById('app-root').innerHTML = '<span style="color:red">🚨 FATAL CRASH:<br>' + err.message + '</span>';
+            });
+    </script>
 </body>
 </html>

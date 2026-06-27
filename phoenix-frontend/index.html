@@ -1,156 +1,40 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <script>
-        window.addEventListener('error', (event) => {
-            if (event.target.tagName === 'SCRIPT' || event.target.tagName === 'LINK') {
-                console.error('🔴 FAILED TO LOAD FILE:', event.target.src || event.target.href);
-            }
-        }, true);
-    </script>
-    
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phoenix Institutional Nexus V6.0</title>
-    <link rel="stylesheet" href="./css/institutional-cockpit-v5.css">
-    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-    <script>eruda.init();</script>
-    <script>
-        window.BACKEND_URL = "https://phoenix-backend-6h1n.onrender.com";
-        window.BRIDGE_URL = "https://phoenix-bridge.onrender.com";
-        window.BRIDGE_WS_URL = "wss://phoenix-bridge.onrender.com/ws/signals";
-    </script>
+    <title>Phoenix Nexus V6.0</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <style>
-        /* Physical Dashboard Architecture */
-        body { margin: 0; background: #050914; color: #00ffcc; font-family: 'Courier New', monospace; overflow: hidden; }
+        body { background: #050914; color: #00ffcc; font-family: 'Courier New', monospace; }
         .nexus-grid { display: grid; grid-template-rows: 50px 1fr 200px; height: 100vh; }
-        .nexus-header { border-bottom: 1px solid #1a2a44; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; background: #0a1128; }
-        .nexus-main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #1a2a44; }
-        .nexus-pane { background: #050914; padding: 15px; position: relative; }
-        .pane-title { position: absolute; top: 0; left: 0; background: #00ffcc; color: #000; padding: 2px 10px; font-weight: bold; font-size: 12px; }
-        .nexus-terminal { background: #000; border-top: 1px solid #1a2a44; padding: 15px; overflow-y: auto; color: #00ff00; }
+        .nexus-main { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #1a2a44; }
+        .nexus-terminal { background: #000; color: #00ff00; padding: 10px; overflow-y: scroll; }
     </style>
 </head>
 <body>
-    <div id="app-root" class="nexus-grid">
-        <div class="nexus-header">
-            <h2>⚡ PHOENIX NEXUS V6.0</h2>
-            <div style="display:flex; gap:15px;">
-                <span id="backend-status">🔴 Backend</span>
-                <span id="bridge-status">🔴 Bridge</span>
-            </div>
-        </div>
+    <div class="nexus-grid">
+        <header>⚡ PHOENIX NEXUS V6.0 <span id="status">🔴 Disconnected</span></header>
         <div class="nexus-main">
-            <div class="nexus-pane" id="widget-execution">
-                <div class="pane-title">EXECUTION ALGO ROUTER</div>
-                <div id="exec-content" style="margin-top:20px;">Awaiting telemetry...</div>
-            </div>
-            <div class="nexus-pane" id="widget-anomaly">
-                <div class="pane-title">ML ANOMALY RADAR</div>
-                <div id="radar-content" style="margin-top:20px;">Scanning orderbook...</div>
-            </div>
+            <div id="exec">Awaiting telemetry...</div>
+            <div id="radar">Scanning orderbook...</div>
         </div>
-        <div class="nexus-terminal" id="sys-terminal">
-            > Infrastructure initialized.<br>
-            > JavaScript Engine: ONLINE.<br>
-            > Igniting AppShell...<br>
-        </div>
+        <div class="nexus-terminal" id="term"></div>
     </div>
 
-    <script type="module">
-        const term = document.getElementById('sys-terminal');
-        const log = (msg) => term.innerHTML += '> ' + msg + '<br>';
+    <script>
+        const term = document.getElementById('term');
+        function log(msg) { term.innerHTML += '> ' + msg + '<br>'; term.scrollTop = term.scrollHeight; }
         
-        import('./js/app/appShell.js')
-            .then(module => {
-                const exportedKeys = Object.keys(module);
-                if (exportedKeys.length > 0) {
-                    const AppClass = module[exportedKeys[0]];
-                    window.cockpit = new AppClass(document.getElementById('app-root'));
-                    log('<span style="color:#00ffcc">🔥 AppShell Synced to Physical UI!</span>');
-                    
-                    if(window.cockpit.render) window.cockpit.render();
-                    if(window.cockpit.init) window.cockpit.init();
-                }
-            })
-            .catch(err => {
-                log('<span style="color:red">🚨 CRASH: ' + err.message + '</span>');
+        // Final attempt at direct connection
+        try {
+            const socket = io("https://phoenix-backend-6h1n.onrender.com", { transports: ['websocket'] });
+            socket.on('connect', () => {
+                document.getElementById('status').innerText = '🟢 LIVE';
+                log('Connected to Backend!');
             });
-    </script>
-
-    
-    
-
-    <script>
-        
-    
-
-    
-    
-
-    <script>
-        // ⚡ ROBUST SOCKET LOADER
-        function loadScript(url, callback) {
-            const script = document.createElement('script');
-            script.src = url;
-            script.onload = callback;
-            script.onerror = () => console.error('🔴 FAILED TO LOAD SOCKET.IO');
-            document.head.appendChild(script);
-        }
-
-        loadScript('https://cdn.socket.io/4.7.5/socket.io.min.js', () => {
-            console.log('✅ Socket.io Library Loaded');
-            initTelemetry();
-        });
-
-        function initTelemetry() {
-            console.log('⚡ Initiating Socket.io Telemetry...');
-            try {
-                const backUrl = window.BACKEND_URL;
-                console.log('🔗 Connecting to: ' + backUrl);
-                
-                // Using 'io' now that we are certain it exists
-                const backSocket = io(backUrl, { transports: ['websocket'] });
-                
-                backSocket.on('connect', () => {
-                    console.log('🟢 Backend [LIVE]');
-                    if(document.getElementById('backend-status')) document.getElementById('backend-status').innerHTML = '🟢 Backend [LIVE]';
-                });
-                backSocket.on('message', (data) => console.log('📈 TICK: ', data));
-                backSocket.on('connect_error', (err) => console.error('🔴 Backend Rejected:', err.message));
-            } catch(e) { console.error('Connection Failed:', e.message); }
+            socket.on('message', (d) => log('TICK: ' + JSON.stringify(d).substring(0,50)));
+        } catch(e) {
+            log('CRITICAL: ' + e.message);
         }
     </script>
-    
-
-    <script>
-        function initSocket() {
-            if (typeof io !== 'undefined') {
-                console.log('✅ Socket.io Library Found');
-                initTelemetry();
-            } else {
-                console.warn('⚠️ Socket.io not found yet, retrying in 500ms...');
-                setTimeout(initSocket, 500);
-            }
-        }
-        
-        // Add the script tag
-        const s = document.createElement('script');
-        s.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
-        s.onerror = () => console.error('🔴 CRITICAL: Socket.io CDN Blocked');
-        document.head.appendChild(s);
-        
-        initSocket();
-
-        function initTelemetry() {
-            try {
-                const backUrl = window.BACKEND_URL;
-                const backSocket = io(backUrl, { transports: ['websocket'] });
-                backSocket.on('connect', () => console.log('🟢 Backend [LIVE]'));
-                backSocket.on('connect_error', (err) => console.error('🔴 Backend Rejected:', err.message));
-            } catch(e) { console.error('Connection Failed:', e.message); }
-        }
-    </script>
-    
 </body>
 </html>

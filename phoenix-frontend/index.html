@@ -74,31 +74,40 @@
     
 
     <script>
-        // ⚡ THE SAFE DEFIBRILLATOR: Pure Console Telemetry
-        setTimeout(() => {
-            console.log('⚡ Initiating Direct Telemetry Override...');
-            
-            // 1. Force connection to Node.js Backend
-            try {
-                const backWsUrl = window.BACKEND_URL.replace('http', 'ws');
-                console.log('🔗 Connecting to Node Aggregator: ' + backWsUrl);
-                
-                const backWs = new WebSocket(backWsUrl);
-                backWs.onopen = () => console.log('🟢 Node.js Backend [LIVE]');
-                backWs.onmessage = (e) => console.log('📈 TICK: ' + e.data.substring(0, 150));
-                backWs.onerror = () => console.error('🔴 Backend WS Blocked / Rejected');
-            } catch(e) { console.error('Backend Error: ' + e.message); }
+        
+    
 
-            // 2. Force connection to Python ML Bridge
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        // ⚡ THE TRANSLATOR: Socket.io Telemetry
+        setTimeout(() => {
+            console.log('⚡ Initiating Socket.io Telemetry...');
+            
+            // Connect to Backend (Socket.io)
+            const backUrl = window.BACKEND_URL;
+            console.log('🔗 Connecting to Socket.io Backend: ' + backUrl);
+            const backSocket = io(backUrl, { transports: ['websocket'] });
+            
+            backSocket.on('connect', () => {
+                console.log('🟢 Backend [LIVE]');
+                document.getElementById('backend-status').innerHTML = '🟢 Backend [LIVE]';
+            });
+            backSocket.on('message', (data) => console.log('📈 TICK: ', data));
+            backSocket.on('connect_error', (err) => console.error('🔴 Backend Rejected:', err.message));
+
+            // Connect to Python Bridge (Assuming it's a standard WS server, we keep raw WS here)
             try {
                 console.log('🔗 Connecting to Python Bridge: ' + window.BRIDGE_WS_URL);
                 const bridgeWs = new WebSocket(window.BRIDGE_WS_URL);
-                bridgeWs.onopen = () => console.log('🟢 Python Bridge [LIVE]');
-                bridgeWs.onmessage = (e) => console.log('🚨 ANOMALY: ' + e.data.substring(0, 150));
-                bridgeWs.onerror = () => console.error('🔴 Bridge WS Blocked / Rejected');
+                bridgeWs.onopen = () => {
+                    console.log('🟢 Python Bridge [LIVE]');
+                    document.getElementById('bridge-status').innerHTML = '🟢 Bridge [LIVE]';
+                };
+                bridgeWs.onmessage = (e) => console.log('🚨 ANOMALY: ', e.data);
+                bridgeWs.onerror = () => console.error('🔴 Bridge Rejected');
             } catch(e) { console.error('Bridge Error: ' + e.message); }
             
-        }, 2000); // Wait 2 seconds for the AI UI to finish rendering
+        }, 2000);
     </script>
     
 </body>

@@ -42,6 +42,17 @@ export class AppShell {
   }
 
   _renderSkeleton() {
+    // Safety: If rootEl is missing, find it in the DOM immediately
+    if (!this.rootEl) {
+        this.rootEl = document.getElementById('app-root');
+    }
+    
+    // Safety: If it's STILL missing, stop to avoid the crash
+    if (!this.rootEl) {
+        console.error("CRITICAL: Phoenix cockpit root element not found.");
+        return;
+    }
+
     this.rootEl.innerHTML = `
       <header class="app-topbar">
         <div class="app-title">

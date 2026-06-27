@@ -15,7 +15,7 @@ import RedisHotCache from "./cache/redisHotCache.js";
 import AsyncPgWriter from "./storage/asyncPgWriter.js";
 import ReplayEngine from "./backtest/replayEngine.js";
 
-const PORT = process.env.PORT || 0.0.0.0;
+const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
@@ -218,6 +218,10 @@ setInterval(async () => {
     const vpin = vpinMap.get(sym)?.value() ?? 0;
     const deltas = xdelta.snapshot(sym);
     const z = wallStats.get(sym)?.zscore(Math.max(Math.abs(micro.bai || 0), Math.abs(micro.obi || 0))) ?? 0;
+    server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
 
     let c = evaluateDeepConsensus({
       technical,

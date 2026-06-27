@@ -475,3 +475,7 @@ function fmt(v) {
 }
 
 export default AppShell;
+
+
+// Force Auto-Ignition
+setTimeout(() => { window.cockpit = new AppShell(); console.log('🚀 Cockpit UI Online'); }, 100);

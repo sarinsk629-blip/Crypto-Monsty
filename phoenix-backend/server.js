@@ -15,7 +15,7 @@ import RedisHotCache from "./cache/redisHotCache.js";
 import AsyncPgWriter from "./storage/asyncPgWriter.js";
 import ReplayEngine from "./backtest/replayEngine.js";
 
-const PORT = process.env.PORT || 8787;
+const PORT = process.env.PORT || 0.0.0.0;
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));

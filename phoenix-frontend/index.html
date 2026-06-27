@@ -77,37 +77,41 @@
         
     
 
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script>
-        // ⚡ THE TRANSLATOR: Socket.io Telemetry
-        setTimeout(() => {
-            console.log('⚡ Initiating Socket.io Telemetry...');
-            
-            // Connect to Backend (Socket.io)
-            const backUrl = window.BACKEND_URL;
-            console.log('🔗 Connecting to Socket.io Backend: ' + backUrl);
-            const backSocket = io(backUrl, { transports: ['websocket'] });
-            
-            backSocket.on('connect', () => {
-                console.log('🟢 Backend [LIVE]');
-                document.getElementById('backend-status').innerHTML = '🟢 Backend [LIVE]';
-            });
-            backSocket.on('message', (data) => console.log('📈 TICK: ', data));
-            backSocket.on('connect_error', (err) => console.error('🔴 Backend Rejected:', err.message));
+    
+    
 
-            // Connect to Python Bridge (Assuming it's a standard WS server, we keep raw WS here)
+    <script>
+        // ⚡ ROBUST SOCKET LOADER
+        function loadScript(url, callback) {
+            const script = document.createElement('script');
+            script.src = url;
+            script.onload = callback;
+            script.onerror = () => console.error('🔴 FAILED TO LOAD SOCKET.IO');
+            document.head.appendChild(script);
+        }
+
+        loadScript('https://cdn.socket.io/4.7.5/socket.io.min.js', () => {
+            console.log('✅ Socket.io Library Loaded');
+            initTelemetry();
+        });
+
+        function initTelemetry() {
+            console.log('⚡ Initiating Socket.io Telemetry...');
             try {
-                console.log('🔗 Connecting to Python Bridge: ' + window.BRIDGE_WS_URL);
-                const bridgeWs = new WebSocket(window.BRIDGE_WS_URL);
-                bridgeWs.onopen = () => {
-                    console.log('🟢 Python Bridge [LIVE]');
-                    document.getElementById('bridge-status').innerHTML = '🟢 Bridge [LIVE]';
-                };
-                bridgeWs.onmessage = (e) => console.log('🚨 ANOMALY: ', e.data);
-                bridgeWs.onerror = () => console.error('🔴 Bridge Rejected');
-            } catch(e) { console.error('Bridge Error: ' + e.message); }
-            
-        }, 2000);
+                const backUrl = window.BACKEND_URL;
+                console.log('🔗 Connecting to: ' + backUrl);
+                
+                // Using 'io' now that we are certain it exists
+                const backSocket = io(backUrl, { transports: ['websocket'] });
+                
+                backSocket.on('connect', () => {
+                    console.log('🟢 Backend [LIVE]');
+                    if(document.getElementById('backend-status')) document.getElementById('backend-status').innerHTML = '🟢 Backend [LIVE]';
+                });
+                backSocket.on('message', (data) => console.log('📈 TICK: ', data));
+                backSocket.on('connect_error', (err) => console.error('🔴 Backend Rejected:', err.message));
+            } catch(e) { console.error('Connection Failed:', e.message); }
+        }
     </script>
     
 </body>

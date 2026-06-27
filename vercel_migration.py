@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# vercel_migration.py
+
+from pathlib import Path
+import textwrap
+
+ROOT = Path(".").resolve()
+
+RENDER_YAML = r'''
 services:
   # 1. THE PYTHON ML BRIDGE
   - type: web
@@ -28,3 +37,14 @@ services:
         value: 18.0.0
       - key: PORT
         value: 8787
+'''
+
+def main():
+    print("⚡ Ripping frontend out of Render...")
+    path = ROOT / "render.yaml"
+    path.write_text(textwrap.dedent(RENDER_YAML).lstrip("\n"), encoding="utf-8")
+    print("✔ render.yaml updated. Backend and Bridge only.")
+
+if __name__ == "__main__":
+    main()
+

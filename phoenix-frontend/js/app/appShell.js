@@ -124,19 +124,19 @@ export class AppShell {
     const symSelect = this.rootEl.querySelector("#sym-select");
     symSelect.addEventListener("change", () => {
       this.store.set({ symbol: symSelect.value });
-      this._log(`[ui] symbol -> ${symSelect.value}`);
+      console.log(`[ui] symbol -> ${symSelect.value}`);
     });
 
     this.rootEl.querySelector("#save-layout").addEventListener("click", () => {
       this.layout.save({ symbol: this.store.get().symbol });
-      this._log("[layout] saved");
+      console.log("[layout] saved");
     });
 
     this.rootEl.querySelector("#load-layout").addEventListener("click", () => {
       const loaded = this.layout.load({ symbol: "BTCUSDT" });
       this.store.set({ symbol: loaded.symbol || "BTCUSDT" });
       symSelect.value = this.store.get().symbol;
-      this._log("[layout] loaded");
+      console.log("[layout] loaded");
     });
   }
 
@@ -164,7 +164,7 @@ export class AppShell {
     this.socket = io("https://phoenix-backend-6h1n.onrender.com", { transports: ["websocket"] });
 
     this.socket.on("connect", () => {
-      this._log("[socket] connected");
+      console.log("[socket] connected");
       this.socket.emit("paper:bootstrap");
     });
 
@@ -193,18 +193,18 @@ export class AppShell {
       this.bus.emit("exchangeHealth", h);
     });
 
-    this.socket.on("paper:orderAck", (ack) => this._log(`[orderAck] ${JSON.stringify(ack)}`));
-    this.socket.on("paper:fill", (fill) => this._log(`[fill] ${JSON.stringify(fill)}`));
-    this.socket.on("paper:error", (e) => this._log(`[error] ${e.message}`));
+    this.socket.on("paper:orderAck", (ack) => console.log(`[orderAck] ${JSON.stringify(ack)}`));
+    this.socket.on("paper:fill", (fill) => console.log(`[fill] ${JSON.stringify(fill)}`));
+    this.socket.on("paper:error", (e) => console.log(`[error] ${e.message}`));
   }
 
   _initBridgeWS() {
     const ws = new WebSocket("wss://phoenix-bridge.onrender.com/ws/signals");
     this.bridgeWS = ws;
 
-    ws.onopen = () => this._log("[bridge-ws] connected");
-    ws.onclose = () => this._log("[bridge-ws] disconnected");
-    ws.onerror = () => this._log("[bridge-ws] error");
+    ws.onopen = () => console.log("[bridge-ws] connected");
+    ws.onclose = () => console.log("[bridge-ws] disconnected");
+    ws.onerror = () => console.log("[bridge-ws] error");
 
     ws.onmessage = (ev) => {
       try {

@@ -114,5 +114,35 @@
         }
     </script>
     
+
+    <script>
+        function initSocket() {
+            if (typeof io !== 'undefined') {
+                console.log('✅ Socket.io Library Found');
+                initTelemetry();
+            } else {
+                console.warn('⚠️ Socket.io not found yet, retrying in 500ms...');
+                setTimeout(initSocket, 500);
+            }
+        }
+        
+        // Add the script tag
+        const s = document.createElement('script');
+        s.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
+        s.onerror = () => console.error('🔴 CRITICAL: Socket.io CDN Blocked');
+        document.head.appendChild(s);
+        
+        initSocket();
+
+        function initTelemetry() {
+            try {
+                const backUrl = window.BACKEND_URL;
+                const backSocket = io(backUrl, { transports: ['websocket'] });
+                backSocket.on('connect', () => console.log('🟢 Backend [LIVE]'));
+                backSocket.on('connect_error', (err) => console.error('🔴 Backend Rejected:', err.message));
+            } catch(e) { console.error('Connection Failed:', e.message); }
+        }
+    </script>
+    
 </body>
 </html>

@@ -32,6 +32,29 @@
         window.BRIDGE_URL = "https://phoenix-bridge-YOUR_URL.onrender.com";
         window.BRIDGE_WS_URL = "wss://phoenix-bridge-YOUR_URL.onrender.com/ws/signals";
       </script>
-      <script type="module" src="./js/app/bootstrap.js"></script>
+      
+
+    <script>
+      // Create a massive on-screen terminal for boot logs
+      document.body.innerHTML += '<div id="boot-log" style="color: #0f0; background: #000; font-family: monospace; padding: 20px; z-index: 9999; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; overflow: auto;">[SYSTEM] Initializing Dynamic Boot Sequence...<br></div>';
+      
+      function logBoot(msg) {
+          document.getElementById('boot-log').innerHTML += msg + '<br><br>';
+      }
+
+      // Force the browser to manually load the bootstrap file and catch ANY error
+      import('./js/app/bootstrap.js')
+        .then(() => {
+            logBoot('[SUCCESS] Engine loaded and executed successfully.');
+            setTimeout(() => document.getElementById('boot-log').style.display = 'none', 1500);
+        })
+        .catch(err => {
+            logBoot('<span style="color: #ff4444;">[FATAL CRASH] ' + err.name + ': ' + err.message + '</span>');
+            if (err.message.includes('fetch') || err.message.includes('resolve')) {
+                logBoot('<span style="color: #ffaa00;">[DIAGNOSIS] Vercel is case-sensitive. You have a typo in an import statement (e.g. importing AppShell.js instead of appShell.js).</span>');
+            }
+        });
+    </script>
+    
 </body>
 </html>

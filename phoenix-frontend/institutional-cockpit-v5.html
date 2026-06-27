@@ -8,6 +8,13 @@
 </head>
 <body>
   <div id="app-root"></div>
-  <script type="module" src="./js/app/bootstrap.js"></script>
+  <script>
+        // RENDER CLOUD URL CONFIGURATION
+        // We will update these manually in the browser or inject them later
+        window.BACKEND_URL = "https://phoenix-backend-YOUR_URL.onrender.com";
+        window.BRIDGE_URL = "https://phoenix-bridge-YOUR_URL.onrender.com";
+        window.BRIDGE_WS_URL = "wss://phoenix-bridge-YOUR_URL.onrender.com/ws/signals";
+      </script>
+      <script type="module" src="./js/app/bootstrap.js"></script>
 </body>
 </html>

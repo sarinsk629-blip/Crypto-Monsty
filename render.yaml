@@ -1,0 +1,37 @@
+services:
+  # 1. THE PYTHON ML BRIDGE
+  - type: web
+    name: phoenix-bridge
+    env: python
+    rootDir: phoenix-bridge
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: BRIDGE_API_KEY
+        value: dev-bridge-key
+      # Internal Render routing for zero-latency backend communication
+      - key: BACKEND_BASE_URL
+        value: http://phoenix-backend:8787 
+
+  # 2. THE NODE.JS AGGREGATOR
+  - type: web
+    name: phoenix-backend
+    env: node
+    rootDir: phoenix-backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.0.0
+      - key: PORT
+        value: 8787
+
+  # 3. THE COCKPIT UI
+  - type: web
+    name: phoenix-frontend
+    env: static
+    rootDir: phoenix-frontend
+    buildCommand: ""
+    staticPublishPath: "."

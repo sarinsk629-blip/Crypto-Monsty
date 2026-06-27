@@ -161,7 +161,7 @@ export class AppShell {
   }
 
   _initSocket() {
-    this.socket = io(window.BACKEND_URL || "http://localhost:8787", { transports: ["websocket"] });
+    this.socket = io("https://phoenix-backend-6h1n.onrender.com", { transports: ["websocket"] });
 
     this.socket.on("connect", () => {
       this._log("[socket] connected");
@@ -199,7 +199,7 @@ export class AppShell {
   }
 
   _initBridgeWS() {
-    const ws = new WebSocket(window.BRIDGE_WS_URL || "ws://localhost:8899/ws/signals");
+    const ws = new WebSocket("wss://phoenix-bridge.onrender.com/ws/signals");
     this.bridgeWS = ws;
 
     ws.onopen = () => this._log("[bridge-ws] connected");
@@ -391,7 +391,7 @@ export class AppShell {
       const symbol = (p[1] || this.store.get().symbol).toUpperCase();
       const score = Number(p[2] || 0);
       try {
-        const r = await fetch((window.BRIDGE_URL || "http://localhost:8899") + "/signal", {
+        const r = await fetch("https://phoenix-bridge.onrender.com") + "/signal", {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-api-key": "dev-bridge-key" },
           body: JSON.stringify({
@@ -428,7 +428,7 @@ export class AppShell {
         feeBps: 2
       };
       try {
-        const r = await fetch("http://localhost:8787/api/replay/backtest", {
+        const r = await fetch("https://phoenix-backend-6h1n.onrender.com/api/replay/backtest", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body)
@@ -444,14 +444,14 @@ export class AppShell {
   _pollHealth() {
     const tick = async () => {
       try {
-        const b = await fetch("http://localhost:8787/health").then((r) => r.json());
+        const b = await fetch("https://phoenix-backend-6h1n.onrender.com/health").then((r) => r.json());
         this.store.set({ backendHealth: b });
       } catch {
         this.store.set({ backendHealth: { ok: false } });
       }
 
       try {
-        const br = await fetch((window.BRIDGE_URL || "http://localhost:8899") + "/health").then((r) => r.json());
+        const br = await fetch("https://phoenix-bridge.onrender.com") + "/health").then((r) => r.json());
         this.store.set({ bridgeHealth: br });
       } catch {
         this.store.set({ bridgeHealth: { ok: false } });

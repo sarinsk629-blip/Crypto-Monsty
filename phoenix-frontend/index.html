@@ -2,27 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Phoenix Cockpit</title>
-  <script src="config.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Crypto Monsty — Phoenix Terminal</title>
-  <link rel="stylesheet" href="./css/variables.css" />
-  <link rel="stylesheet" href="./css/base.css" />
-  <link rel="stylesheet" href="./css/layout.css" />
-  <link rel="stylesheet" href="./css/components.css" />
-  <link rel="stylesheet" href="./css/pages.css" />
-  <link rel="stylesheet" href="./css/aichat.css" />
-  <link rel="stylesheet" href="./css/beginner.css" />
-  <link rel="stylesheet" href="./css/protools.css" />
+  <title>Phoenix Institutional Cockpit V5.2</title>
+  <link rel="stylesheet" href="./css/institutional-cockpit-v5.css" />
 </head>
 <body>
-  <div id="app">
-    <header><h1>Crypto Monsty — Phoenix Terminal v2.0</h1></header>
-    <main>
-      <p>Scratch build initialized.</p>
-      <pre id="debug"></pre>
-    </main>
-  </div>
-  <script type="module" src="./js/main.js"></script>
+  <div id="app-root"></div>
+  <script>
+        // RENDER CLOUD URL CONFIGURATION
+        // We will update these manually in the browser or inject them later
+        window.BACKEND_URL = "https://phoenix-backend-YOUR_URL.onrender.com";
+        window.BRIDGE_URL = "https://phoenix-bridge-YOUR_URL.onrender.com";
+        window.BRIDGE_WS_URL = "wss://phoenix-bridge-YOUR_URL.onrender.com/ws/signals";
+      </script>
+      <script type="module" src="./js/app/bootstrap.js"></script>
 </body>
 </html>
